@@ -1,22 +1,62 @@
 import { json, redirect } from "@remix-run/node";
 import { useLoaderData, Form, useNavigation } from "@remix-run/react";
-import { Page, Layout, Card, Text, TextField, Button, Select, InlineStack, BlockStack } from "@shopify/polaris";
+import { Page, Layout, Card, Text, TextField, Button, Select, InlineStack, BlockStack, Modal, ResourceList, ResourceItem, Thumbnail, Checkbox } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import React from "react";
 
-// ---- Loader: read metafield
+// ---- Loader: read metafield and get products
 export async function loader({ request }) {
   const { admin } = await authenticate.admin(request);
-  const query = `#graphql
+  
+  // Get bundle configuration
+  const configQuery = `#graphql
     query {
       shop {
         metafield(namespace:"$app:rgmn-bundle", key:"function-configuration"){ id value }
       }
     }`;
-  const res = await admin.graphql(query);
-  const data = await res.json();
-  const current = data?.data?.shop?.metafield?.value ? JSON.parse(data.data.shop.metafield.value) : null;
-  return json({ current });
+  
+  // Get products for pickers
+  const productsQuery = `#graphql
+    query {
+      products(first: 100) {
+        edges {
+          node {
+            id
+            title
+            handle
+            featuredImage {
+              url
+              altText
+            }
+            variants(first: 10) {
+              edges {
+                node {
+                  id
+                  title
+                  price
+                  sku
+                  inventoryQuantity
+                }
+              }
+            }
+          }
+        }
+      }
+    }`;
+
+  const [configRes, productsRes] = await Promise.all([
+    admin.graphql(configQuery),
+    admin.graphql(productsQuery)
+  ]);
+
+  const configData = await configRes.json();
+  const productsData = await productsRes.json();
+  
+  const current = configData?.data?.shop?.metafield?.value ? JSON.parse(configData.data.shop.metafield.value) : null;
+  const products = productsData?.data?.products?.edges?.map(edge => edge.node) || [];
+
+  return json({ current, products });
 }
 
 // ---- Action: save metafield (JSON)
@@ -45,7 +85,7 @@ export async function action({ request }) {
 }
 
 export default function BundleSettings() {
-  const { current } = useLoaderData();
+  const { current, products } = useLoaderData();
   const nav = useNavigation();
   
   // Initialize form state
@@ -59,6 +99,8 @@ export default function BundleSettings() {
     oneTimeLabel: "One-time purchase"
   });
   const [showJsonEditor, setShowJsonEditor] = React.useState(false);
+  const [showProductPicker, setShowProductPicker] = React.useState(false);
+  const [editingComponentIndex, setEditingComponentIndex] = React.useState(-1);
 
   const addComponent = () => {
     setComponents([...components, {
@@ -78,6 +120,32 @@ export default function BundleSettings() {
   const removeComponent = (index) => {
     setComponents(components.filter((_, i) => i !== index));
   };
+
+  const openProductPicker = (componentIndex) => {
+    setEditingComponentIndex(componentIndex);
+    setShowProductPicker(true);
+  };
+
+  const handleProductSelection = (selectedVariants) => {
+    if (editingComponentIndex >= 0) {
+      const updated = [...components];
+      updated[editingComponentIndex].variantIds = selectedVariants;
+      setComponents(updated);
+    }
+    setShowProductPicker(false);
+    setEditingComponentIndex(-1);
+  };
+
+  // Get bundle product options for the main bundle selector
+  const bundleProductOptions = [
+    { label: "Select a bundle product...", value: "" },
+    ...products.flatMap(product => 
+      product.variants.edges.map(variant => ({
+        label: `${product.title} - ${variant.node.title} ($${variant.node.price})`,
+        value: variant.node.id
+      }))
+    )
+  ];
 
   const handleSave = () => {
     const config = {
@@ -141,12 +209,12 @@ export default function BundleSettings() {
                 helpText="The display name for your bundle offer"
               />
               
-              <TextField
-                label="Bundle Product Variant ID"
+              <Select
+                label="Bundle Product Variant"
+                options={bundleProductOptions}
                 value={bundleVariantId}
                 onChange={setBundleVariantId}
-                helpText="The Shopify variant ID of the bundle product (e.g., gid://shopify/ProductVariant/123456)"
-                placeholder="gid://shopify/ProductVariant/"
+                helpText="Select the product variant that customers will receive when they accept the bundle offer"
               />
             </BlockStack>
           </Card>
@@ -182,36 +250,31 @@ export default function BundleSettings() {
                         
                         <InlineStack gap="300">
                           <TextField
-                            label="Component Key"
-                            value={component.key}
-                            onChange={(value) => updateComponent(index, 'key', value)}
-                            helpText="Unique identifier"
-                          />
-                          <TextField
-                            label="Label"
+                            label="Component Name"
                             value={component.label}
                             onChange={(value) => updateComponent(index, 'label', value)}
-                            helpText="Display name"
+                            helpText="What to call this component (e.g., 'Main Product', 'Add-on')"
                           />
                           <TextField
-                            label="Required Qty"
+                            label="Required Quantity"
                             type="number"
                             value={component.required?.toString() || "1"}
                             onChange={(value) => updateComponent(index, 'required', parseInt(value) || 1)}
-                            helpText="How many needed"
+                            helpText="How many of this component are needed for the bundle"
                           />
                         </InlineStack>
                         
-                        <TextField
-                          label="Variant IDs (comma-separated)"
-                          value={(component.variantIds || []).join(', ')}
-                          onChange={(value) => updateComponent(index, 'variantIds', 
-                            value.split(',').map(id => id.trim()).filter(id => id)
-                          )}
-                          helpText="Product variant IDs that belong to this component"
-                          placeholder="gid://shopify/ProductVariant/123, gid://shopify/ProductVariant/456"
-                          multiline={2}
-                        />
+                        <InlineStack align="space-between">
+                          <Text as="p" tone="subdued">
+                            {(component.variantIds || []).length} variant{(component.variantIds || []).length !== 1 ? 's' : ''} selected
+                          </Text>
+                          <Button 
+                            onClick={() => openProductPicker(index)}
+                            size="sm"
+                          >
+                            {(component.variantIds || []).length > 0 ? 'Edit Products' : 'Select Products'}
+                          </Button>
+                        </InlineStack>
                       </BlockStack>
                     </Card>
                   ))}
@@ -274,6 +337,137 @@ export default function BundleSettings() {
           </Layout.Section>
         )}
       </Layout>
+
+      {/* Product Picker Modal */}
+      <ProductPickerModal
+        isOpen={showProductPicker}
+        onClose={() => setShowProductPicker(false)}
+        onSelect={handleProductSelection}
+        products={products}
+        selectedVariantIds={editingComponentIndex >= 0 ? components[editingComponentIndex]?.variantIds || [] : []}
+        title={`Select Products for ${editingComponentIndex >= 0 ? components[editingComponentIndex]?.label || 'Component' : 'Component'}`}
+      />
     </Page>
+  );
+}
+
+// Product Picker Modal Component
+function ProductPickerModal({ isOpen, onClose, onSelect, products, selectedVariantIds, title }) {
+  const [selectedIds, setSelectedIds] = React.useState(new Set(selectedVariantIds));
+
+  React.useEffect(() => {
+    setSelectedIds(new Set(selectedVariantIds));
+  }, [selectedVariantIds]);
+
+  const handleVariantToggle = (variantId) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(variantId)) {
+        newSet.delete(variantId);
+      } else {
+        newSet.add(variantId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = (productVariants, select) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      productVariants.forEach(variant => {
+        if (select) {
+          newSet.add(variant.id);
+        } else {
+          newSet.delete(variant.id);
+        }
+      });
+      return newSet;
+    });
+  };
+
+  const handleConfirm = () => {
+    onSelect(Array.from(selectedIds));
+  };
+
+  return (
+    <Modal
+      open={isOpen}
+      onClose={onClose}
+      title={title}
+      primaryAction={{
+        content: `Select ${selectedIds.size} variant${selectedIds.size !== 1 ? 's' : ''}`,
+        onAction: handleConfirm,
+        disabled: selectedIds.size === 0
+      }}
+      secondaryActions={[{
+        content: "Cancel",
+        onAction: onClose
+      }]}
+      large
+    >
+      <Modal.Section>
+        <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
+          {products.map(product => {
+            const variants = product.variants.edges.map(edge => edge.node);
+            const productSelectedCount = variants.filter(v => selectedIds.has(v.id)).length;
+            const allSelected = productSelectedCount === variants.length;
+
+            return (
+              <Card key={product.id} sectioned>
+                <BlockStack gap="300">
+                  <InlineStack align="space-between">
+                    <InlineStack gap="300">
+                      {product.featuredImage && (
+                        <Thumbnail
+                          source={product.featuredImage.url}
+                          alt={product.featuredImage.altText || product.title}
+                          size="small"
+                        />
+                      )}
+                      <BlockStack gap="100">
+                        <Text as="h3" variant="headingSm">{product.title}</Text>
+                        <Text as="p" tone="subdued" variant="bodySm">
+                          {variants.length} variant{variants.length !== 1 ? 's' : ''}
+                        </Text>
+                      </BlockStack>
+                    </InlineStack>
+                    
+                    <Button
+                      size="sm"
+                      onClick={() => handleSelectAll(variants, !allSelected)}
+                    >
+                      {allSelected ? "Deselect All" : "Select All"}
+                    </Button>
+                  </InlineStack>
+
+                  <div style={{ paddingLeft: '52px' }}>
+                    <BlockStack gap="200">
+                      {variants.map(variant => (
+                        <InlineStack key={variant.id} align="space-between">
+                          <InlineStack gap="300">
+                            <Checkbox
+                              checked={selectedIds.has(variant.id)}
+                              onChange={() => handleVariantToggle(variant.id)}
+                            />
+                            <BlockStack gap="050">
+                              <Text as="p" variant="bodyMd">
+                                {variant.title}
+                              </Text>
+                              <Text as="p" tone="subdued" variant="bodySm">
+                                ${variant.price} {variant.sku && `• SKU: ${variant.sku}`}
+                              </Text>
+                            </BlockStack>
+                          </InlineStack>
+                        </InlineStack>
+                      ))}
+                    </BlockStack>
+                  </div>
+                </BlockStack>
+              </Card>
+            );
+          })}
+        </div>
+      </Modal.Section>
+    </Modal>
   );
 }
