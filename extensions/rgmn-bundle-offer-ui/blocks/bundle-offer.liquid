@@ -1,0 +1,15 @@
+<div id="rgmn-bundle-offer" class="rgmn-bundle-offer"></div>
+
+<script type="application/json" data-rgmn-bundle-config>
+  {{ shop.metafields["$app:rgmn-bundle"]["function-configuration"].value | json }}
+</script>
+
+<script src="{{ 'bundle-offer.js' | asset_url }}" defer></script>
+
+{% schema %}
+{
+  "name": "RGMN Bundle Offer",
+  "target": "section",
+  "settings": []
+}
+{% endschema %}
