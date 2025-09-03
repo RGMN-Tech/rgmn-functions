@@ -1,364 +1,392 @@
-async function getCart() {
-  const r = await fetch('/cart.js', { credentials: 'same-origin' });
-  return r.json();
-}
+// RGMN Bundle Offer - Manual Upgrade System
+// Shows upgrade button when bundle components are detected
+// Opens modal for user to manually confirm bundle upgrade
+
 function parseConfig() {
-  const el = document.querySelector('[data-rgmn-bundle-config]');
-  return el ? JSON.parse(el.textContent || '{}') : {};
-}
-function computeSets(cart, config) {
-  if (!config.components?.length) return { sets: 0 };
-  const bundleNum = Number((config.bundleVariantId || '').split('/').pop());
-  if (cart.items.some(i => i.variant_id === bundleNum)) return { sets: 0 };
-  const counts = Object.fromEntries(config.components.map(c => [c.key, 0]));
-  for (const item of cart.items) {
-    const gid = `gid://shopify/ProductVariant/${item.variant_id}`;
-    const comp = config.components.find(c => (c.variantIds || []).includes(gid));
-    if (comp) counts[comp.key] += item.quantity;
+  const el = document.querySelector('script[data-rgmn-bundle-config]');
+  if (!el) return null;
+  try {
+    return JSON.parse(el.textContent);
+  } catch {
+    return null;
   }
-  const sets = Math.min(...config.components.map(c => Math.floor((counts[c.key] || 0) / (c.required || 1))));
-  return { sets: Number.isFinite(sets) ? sets : 0 };
 }
-function cartHasAnySellingPlan(cart) {
-  return cart.items.some(i => !!i.selling_plan_allocation || !!i.selling_plan);
+
+async function getCart() {
+  const res = await fetch('/cart.js');
+  return res.json();
 }
-function buildDecrements(cart, config, sets) {
-  const decrements = {};
-  const byKey = new Map(config.components.map(c => [c.key, []]));
+
+function findBundleComponents(cart, config) {
+  const components = config.components || [];
+  const bundleItems = [];
+  const componentCounts = new Map();
+  
+  // Initialize component counts
+  components.forEach(comp => componentCounts.set(comp.key, 0));
+  
   for (const line of cart.items) {
-    const gid = `gid://shopify/ProductVariant/${line.variant_id}`;
-    const comp = config.components.find(c => (c.variantIds || []).includes(gid));
-    if (comp) byKey.get(comp.key).push(line);
-  }
-  for (const c of config.components) {
-    let need = (c.required || 1) * sets;
-    const pool = byKey.get(c.key) || [];
-    for (const line of pool) {
-      if (need <= 0) break;
-      const take = Math.min(need, line.quantity);
-      decrements[line.key] = line.quantity - take;
-      need -= take;
+    const vId = line.variant_id ? `gid://shopify/ProductVariant/${line.variant_id}` : "";
+    const comp = components.find(c => (c.variantIds || []).includes(vId));
+    if (comp) {
+      bundleItems.push({
+        cartLineId: line.key,
+        variantId: vId,
+        productTitle: line.product_title,
+        variantTitle: line.variant_title,
+        quantity: line.quantity,
+        price: line.price,
+        image: line.image,
+        component: comp
+      });
+      componentCounts.set(comp.key, componentCounts.get(comp.key) + line.quantity);
     }
   }
-  return decrements;
+  
+  // Check if we have at least one of each required component
+  const hasAllComponents = components.every(comp => 
+    componentCounts.get(comp.key) >= (comp.required || 1)
+  );
+  
+  return { 
+    hasAnyComponent: bundleItems.length > 0,
+    hasAllComponents,
+    bundleItems,
+    componentCounts
+  };
 }
-async function applyOneTimeViaFunction(sets) {
-  await fetch('/cart/update.js', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ attributes: { rgmn_bundle_apply: `one_time:${sets}` } }) });
-  await fetch('/cart/update.js', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ attributes: { rgmn_bundle_apply: '0' } }) });
-  location.reload();
-}
-async function applySubscriptionViaAjax({ sets, bundleVariantId, bundlePlanId, decrements }) {
-  await fetch('/cart/update.js', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ updates: decrements }) });
-  await fetch('/cart/add.js', {
-    method: 'POST', headers: { 'Content-Type':'application/json' },
-    body: JSON.stringify({ items: [{ id: Number(bundleVariantId.split('/').pop()), quantity: sets, selling_plan: bundlePlanId }] })
-  });
-  location.reload();
-}
-function renderCTA({ sets, config, hasSubs }) {
+
+function renderUpgradeButton({ bundleComponents, config }) {
   const el = document.getElementById('rgmn-bundle-offer');
   if (!el) return;
+  
+  const { hasAnyComponent, hasAllComponents, bundleItems } = bundleComponents;
+  
+  if (!hasAnyComponent) {
+    el.style.display = 'none';
+    return;
+  }
+
   const copy = config.uiCopy || {};
   const bundleName = config.bundleTitle || 'Bundle';
-  const cta = (copy.cta || 'Replace {sets} set(s) with the {bundle} and save?').replace('{sets}', sets).replace('{bundle}', bundleName);
   
-  // Enhanced UI with better styling
+  // Different messages based on whether they have all components
+  let message, buttonText, buttonEnabled;
+  
+  if (hasAllComponents) {
+    message = `You have items that can be bundled! Upgrade to ${bundleName} subscription and save.`;
+    buttonText = "Upgrade & Save";
+    buttonEnabled = true;
+  } else {
+    message = `Add more items to unlock ${bundleName} subscription savings.`;
+    buttonText = "See Bundle Details";
+    buttonEnabled = true;
+  }
+
   el.innerHTML = `
-    <div class="rgmn-offer">
-      <div class="rgmn-offer-header">
-        <div class="rgmn-offer-icon">🎁</div>
-        <div class="rgmn-offer-content">
-          <h3 class="rgmn-offer-title">Bundle Offer Available!</h3>
-          <p class="rgmn-offer-description">${cta}</p>
+    <div class="rgmn-upgrade-banner">
+      <div class="rgmn-upgrade-content">
+        <div class="rgmn-upgrade-icon">🎁</div>
+        <div class="rgmn-upgrade-text">
+          <h3>${message}</h3>
+          <p>${bundleItems.length} bundle item${bundleItems.length !== 1 ? 's' : ''} in your cart</p>
         </div>
-      </div>
-      
-      <div class="rgmn-offer-controls">
-        <div class="rgmn-purchase-options">
-          <div class="rgmn-option">
-            <label class="rgmn-radio-label">
-              <input type="radio" name="rgmn-mode" value="one-time" ${hasSubs ? '' : 'checked'}>
-              <span class="rgmn-radio-custom"></span>
-              <div class="rgmn-option-details">
-                <span class="rgmn-option-title">${copy.oneTimeLabel || 'One-time purchase'}</span>
-                <span class="rgmn-option-subtitle">No commitment</span>
-              </div>
-            </label>
-          </div>
-          
-          ${(config.bundleSellingPlans || []).length > 0 ? `
-          <div class="rgmn-option">
-            <label class="rgmn-radio-label">
-              <input type="radio" name="rgmn-mode" value="subscribe" ${hasSubs ? 'checked' : ''}>
-              <span class="rgmn-radio-custom"></span>
-              <div class="rgmn-option-details">
-                <span class="rgmn-option-title">${copy.ctaSubscribe || 'Subscribe & save'}</span>
-                <span class="rgmn-option-subtitle">Get it delivered regularly</span>
-              </div>
-            </label>
-          </div>
-          ` : ''}
-        </div>
-        
-        <select id="rgmn-plan" class="rgmn-plan-selector" style="display:none">
-          <option value="">Select delivery frequency...</option>
-        </select>
-        
-        <div class="rgmn-offer-actions">
-          <button id="rgmn-apply" class="rgmn-apply-btn">
-            <span class="rgmn-btn-text">${copy.confirmBtn || 'Yes, upgrade to bundle'}</span>
-            <span class="rgmn-btn-icon">→</span>
-          </button>
-          <button id="rgmn-dismiss" class="rgmn-dismiss-btn">
-            No thanks
-          </button>
-        </div>
+        <button id="rgmn-upgrade-btn" class="rgmn-upgrade-button" ${!buttonEnabled ? 'disabled' : ''}>
+          ${buttonText}
+        </button>
       </div>
     </div>`;
 
-  // Add enhanced styling
-  if (!document.getElementById('rgmn-bundle-styles')) {
-    const styles = document.createElement('style');
-    styles.id = 'rgmn-bundle-styles';
-    styles.textContent = `
-      .rgmn-offer {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border-radius: 12px;
-        padding: 20px;
-        margin: 16px 0;
-        box-shadow: 0 8px 32px rgba(0,0,0,0.1);
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      }
-      
-      .rgmn-offer-header {
-        display: flex;
-        align-items: center;
-        margin-bottom: 20px;
-      }
-      
-      .rgmn-offer-icon {
-        font-size: 32px;
-        margin-right: 16px;
-      }
-      
-      .rgmn-offer-title {
-        margin: 0 0 8px 0;
-        font-size: 20px;
-        font-weight: 600;
-      }
-      
-      .rgmn-offer-description {
-        margin: 0;
-        opacity: 0.9;
-        font-size: 16px;
-        line-height: 1.4;
-      }
-      
-      .rgmn-purchase-options {
-        display: flex;
-        gap: 16px;
-        margin-bottom: 16px;
-        flex-wrap: wrap;
-      }
-      
-      .rgmn-option {
-        flex: 1;
-        min-width: 200px;
-      }
-      
-      .rgmn-radio-label {
-        display: flex;
-        align-items: center;
-        background: rgba(255,255,255,0.1);
-        border: 2px solid rgba(255,255,255,0.2);
-        border-radius: 8px;
-        padding: 16px;
-        cursor: pointer;
-        transition: all 0.3s ease;
-      }
-      
-      .rgmn-radio-label:hover {
-        background: rgba(255,255,255,0.15);
-        border-color: rgba(255,255,255,0.4);
-      }
-      
-      .rgmn-radio-label input:checked + .rgmn-radio-custom + .rgmn-option-details {
-        opacity: 1;
-      }
-      
-      .rgmn-radio-label input:checked ~ * {
-        opacity: 1;
-      }
-      
-      .rgmn-radio-label input {
-        display: none;
-      }
-      
-      .rgmn-radio-custom {
-        width: 20px;
-        height: 20px;
-        border: 2px solid rgba(255,255,255,0.6);
-        border-radius: 50%;
-        margin-right: 12px;
-        position: relative;
-        transition: all 0.3s ease;
-      }
-      
-      .rgmn-radio-label input:checked + .rgmn-radio-custom {
-        border-color: white;
-        background: white;
-      }
-      
-      .rgmn-radio-label input:checked + .rgmn-radio-custom::after {
-        content: '';
-        width: 8px;
-        height: 8px;
-        background: #667eea;
-        border-radius: 50%;
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-      }
-      
-      .rgmn-option-details {
-        opacity: 0.7;
-        transition: opacity 0.3s ease;
-      }
-      
-      .rgmn-option-title {
-        display: block;
-        font-weight: 600;
-        margin-bottom: 4px;
-      }
-      
-      .rgmn-option-subtitle {
-        font-size: 14px;
-        opacity: 0.8;
-      }
-      
-      .rgmn-plan-selector {
-        width: 100%;
-        padding: 12px 16px;
-        border: none;
-        border-radius: 8px;
-        background: rgba(255,255,255,0.9);
-        color: #333;
-        font-size: 16px;
-        margin-bottom: 16px;
-      }
-      
-      .rgmn-offer-actions {
-        display: flex;
-        gap: 12px;
-        align-items: center;
-      }
-      
-      .rgmn-apply-btn {
-        flex: 1;
-        background: white;
-        color: #667eea;
-        border: none;
-        border-radius: 8px;
-        padding: 16px 24px;
-        font-size: 16px;
-        font-weight: 600;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 8px;
-        transition: all 0.3s ease;
-      }
-      
-      .rgmn-apply-btn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-      }
-      
-      .rgmn-dismiss-btn {
-        background: none;
-        border: 2px solid rgba(255,255,255,0.3);
-        color: white;
-        border-radius: 8px;
-        padding: 12px 20px;
-        cursor: pointer;
-        font-size: 14px;
-        transition: all 0.3s ease;
-      }
-      
-      .rgmn-dismiss-btn:hover {
-        background: rgba(255,255,255,0.1);
-        border-color: rgba(255,255,255,0.5);
-      }
-      
-      @media (max-width: 768px) {
-        .rgmn-purchase-options {
-          flex-direction: column;
-        }
-        
-        .rgmn-option {
-          min-width: auto;
-        }
-        
-        .rgmn-offer-actions {
-          flex-direction: column;
-        }
-        
-        .rgmn-apply-btn {
-          width: 100%;
-        }
-      }
-    `;
-    document.head.appendChild(styles);
-  }
-
-  const modeRadios = el.querySelectorAll('input[name="rgmn-mode"]');
-  const planSel = el.querySelector('#rgmn-plan');
-  const dismissBtn = el.querySelector('#rgmn-dismiss');
+  // Add styling
+  addUpgradeStyles();
   
-  const showPlans = () => {
-    const mode = [...modeRadios].find(r => r.checked)?.value;
-    if (mode === 'subscribe' && (config.bundleSellingPlans || []).length > 0) {
-      planSel.innerHTML = [
-        '<option value="">Select delivery frequency...</option>',
-        ...(config.bundleSellingPlans || []).map(p => 
-          `<option value="${p.id}">${p.label || `Every ${p.count} ${p.interval}${p.count !== 1 ? 's' : ''}`}</option>`
-        )
-      ].join('');
-      planSel.style.display = 'block';
-    } else {
-      planSel.style.display = 'none';
-    }
-  };
-  
-  modeRadios.forEach(r => r.addEventListener('change', showPlans));
-  showPlans();
-  
-  // Add dismiss functionality
-  dismissBtn.addEventListener('click', () => {
-    el.style.display = 'none';
-    // Store dismissal in sessionStorage to avoid showing again in this session
-    sessionStorage.setItem('rgmn-bundle-dismissed', 'true');
-  });
-  el.querySelector('#rgmn-apply').addEventListener('click', async () => {
-    const cart = await getCart();
-    const { sets } = computeSets(cart, config);
-    if (sets <= 0) return;
-    const selectedMode = [...modeRadios].find(r => r.checked)?.value;
-    if (selectedMode === 'one-time' && !cartHasAnySellingPlan(cart)) {
-      await applyOneTimeViaFunction(sets);
-    } else {
-      // subscription path (or mixed cart)
-      const decrements = buildDecrements(cart, config, sets);
-      const planId = selectedMode === 'subscribe'
-        ? Number(planSel.value)
-        : (config?.defaults?.subscribeDefaultPlanIds || config?.bundleSellingPlans?.[0]?.id);
-      await applySubscriptionViaAjax({ sets, bundleVariantId: config.bundleVariantId, bundlePlanId: planId, decrements });
-    }
+  // Add click handler
+  document.getElementById('rgmn-upgrade-btn').addEventListener('click', () => {
+    showUpgradeModal(bundleComponents, config);
   });
 }
+
+function addUpgradeStyles() {
+  if (document.getElementById('rgmn-upgrade-styles')) return;
+  
+  const styles = document.createElement('style');
+  styles.id = 'rgmn-upgrade-styles';
+  styles.textContent = `
+    .rgmn-upgrade-banner {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      border-radius: 12px;
+      padding: 20px;
+      margin: 16px 0;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    
+    .rgmn-upgrade-content {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    
+    .rgmn-upgrade-icon {
+      font-size: 32px;
+      flex-shrink: 0;
+    }
+    
+    .rgmn-upgrade-text {
+      flex: 1;
+    }
+    
+    .rgmn-upgrade-text h3 {
+      margin: 0 0 4px 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    
+    .rgmn-upgrade-text p {
+      margin: 0;
+      opacity: 0.9;
+      font-size: 14px;
+    }
+    
+    .rgmn-upgrade-button {
+      background: white;
+      color: #667eea;
+      border: none;
+      border-radius: 8px;
+      padding: 12px 24px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s ease;
+    }
+    
+    .rgmn-upgrade-button:hover:not(:disabled) {
+      transform: translateY(-2px);
+    }
+    
+    .rgmn-upgrade-button:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+    
+    .rgmn-modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .rgmn-modal {
+      background: white;
+      border-radius: 12px;
+      max-width: 500px;
+      width: 100%;
+      max-height: 80vh;
+      overflow-y: auto;
+    }
+    
+    .rgmn-modal-header {
+      padding: 24px 24px 16px;
+      border-bottom: 1px solid #e5e5e5;
+    }
+    
+    .rgmn-modal-body {
+      padding: 24px;
+    }
+    
+    .rgmn-modal-footer {
+      padding: 16px 24px 24px;
+      border-top: 1px solid #e5e5e5;
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+    }
+    
+    .rgmn-bundle-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px;
+      border: 1px solid #e5e5e5;
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+    
+    .rgmn-bundle-item img {
+      width: 60px;
+      height: 60px;
+      object-fit: cover;
+      border-radius: 4px;
+    }
+    
+    .rgmn-item-details {
+      flex: 1;
+    }
+    
+    .rgmn-item-details h4 {
+      margin: 0 0 4px 0;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    
+    .rgmn-item-details p {
+      margin: 0;
+      font-size: 12px;
+      color: #666;
+    }
+    
+    .rgmn-btn-primary {
+      background: #667eea;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 12px 24px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    
+    .rgmn-btn-secondary {
+      background: #f5f5f5;
+      color: #333;
+      border: none;
+      border-radius: 6px;
+      padding: 12px 24px;
+      cursor: pointer;
+    }
+    
+    @media (max-width: 768px) {
+      .rgmn-upgrade-content {
+        flex-direction: column;
+        text-align: center;
+        gap: 12px;
+      }
+      
+      .rgmn-upgrade-button {
+        width: 100%;
+      }
+    }
+  `;
+  document.head.appendChild(styles);
+}
+
+function showUpgradeModal(bundleComponents, config) {
+  const { bundleItems, hasAllComponents } = bundleComponents;
+  const bundleName = config.bundleTitle || 'Bundle';
+  
+  const modalHtml = `
+    <div class="rgmn-modal-overlay" id="rgmn-modal">
+      <div class="rgmn-modal">
+        <div class="rgmn-modal-header">
+          <h2>Upgrade to ${bundleName}</h2>
+          <p>Switch to a subscription and save on your regular order</p>
+        </div>
+        
+        <div class="rgmn-modal-body">
+          <h3>Items in your cart for this bundle:</h3>
+          ${bundleItems.map(item => `
+            <div class="rgmn-bundle-item">
+              <img src="${item.image}" alt="${item.productTitle}">
+              <div class="rgmn-item-details">
+                <h4>${item.productTitle}</h4>
+                <p>${item.variantTitle} • Qty: ${item.quantity} • $${(item.price / 100).toFixed(2)}</p>
+              </div>
+            </div>
+          `).join('')}
+          
+          ${hasAllComponents ? `
+            <div style="background: #f0f9ff; padding: 16px; border-radius: 8px; margin: 16px 0;">
+              <h4 style="margin: 0 0 8px 0; color: #0369a1;">✓ Ready to bundle!</h4>
+              <p style="margin: 0; color: #0369a1;">You have all the items needed for this bundle. Upgrade to subscription and save!</p>
+            </div>
+          ` : `
+            <div style="background: #fef3c7; padding: 16px; border-radius: 8px; margin: 16px 0;">
+              <h4 style="margin: 0 0 8px 0; color: #92400e;">Missing items</h4>
+              <p style="margin: 0; color: #92400e;">Add the remaining bundle components to unlock subscription savings.</p>
+            </div>
+          `}
+        </div>
+        
+        <div class="rgmn-modal-footer">
+          <button class="rgmn-btn-secondary" onclick="closeUpgradeModal()">
+            Close
+          </button>
+          ${hasAllComponents ? `
+            <button class="rgmn-btn-primary" onclick="confirmBundleUpgrade()">
+              Upgrade to Subscription
+            </button>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+  
+  document.body.insertAdjacentHTML('beforeend', modalHtml);
+  
+  // Store data for upgrade
+  window.rgmnBundleData = { bundleComponents, config };
+}
+
+function closeUpgradeModal() {
+  const modal = document.getElementById('rgmn-modal');
+  if (modal) {
+    modal.remove();
+  }
+  delete window.rgmnBundleData;
+}
+
+async function confirmBundleUpgrade() {
+  const { bundleComponents, config } = window.rgmnBundleData;
+  const { bundleItems } = bundleComponents;
+  
+  // Get the first selling plan ID (assuming bundle has subscription plans)
+  const subscriptionPlanId = config.bundleSellingPlans?.[0]?.id;
+  if (!subscriptionPlanId) {
+    alert('No subscription plan configured for this bundle.');
+    return;
+  }
+  
+  // Prepare items to remove
+  const itemsToRemove = bundleItems.map(item => ({
+    cartLineId: item.cartLineId,
+    currentQuantity: item.quantity,
+    quantityToRemove: Math.min(item.quantity, item.component.required || 1)
+  }));
+  
+  try {
+    await applyBundleUpgrade(config.bundleVariantId, itemsToRemove, subscriptionPlanId);
+  } catch (error) {
+    console.error('Bundle upgrade failed:', error);
+    alert('Sorry, there was an error upgrading your bundle. Please try again.');
+  }
+}
+
+async function applyBundleUpgrade(bundleVariantId, itemsToRemove, subscriptionPlanId) {
+  const upgradeData = {
+    bundleVariantId,
+    itemsToRemove,
+    subscriptionPlanId
+  };
+  
+  await fetch('/cart/update.js', {
+    method: 'POST', 
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify({ 
+      attributes: { 
+        'rgmn-bundle-apply': `manual_bundle_upgrade:${JSON.stringify(upgradeData)}` 
+      } 
+    })
+  });
+  
+  location.reload();
+}
+
+// Initialize the system
 (async () => {
   try {
     // Check if user has dismissed the offer in this session
@@ -367,9 +395,15 @@ function renderCTA({ sets, config, hasSubs }) {
     }
 
     const config = parseConfig();
-    if (!config.components?.length) return;
+    if (!config || !config.components?.length) return;
+    
     const cart = await getCart();
-    const { sets } = computeSets(cart, config);
-    if (sets > 0) renderCTA({ sets, config, hasSubs: cartHasAnySellingPlan(cart) });
-  } catch {}
+    const bundleComponents = findBundleComponents(cart, config);
+    
+    if (bundleComponents.hasAnyComponent) {
+      renderUpgradeButton({ bundleComponents, config });
+    }
+  } catch (error) {
+    console.error('RGMN Bundle error:', error);
+  }
 })();

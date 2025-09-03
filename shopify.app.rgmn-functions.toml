@@ -3,7 +3,7 @@
 client_id = "77dc002e0c0f5a42da57f99b2dd76b12"
 name = "RGMN Functions"
 handle = "rgmn-functions"
-application_url = "https://feel-precipitation-collective-quiet.trycloudflare.com"
+application_url = "https://catch-myanmar-funny-commodities.trycloudflare.com"
 embedded = true
 
 [build]
@@ -17,9 +17,9 @@ scopes = "read_products,write_products"
 
 [auth]
 redirect_urls = [
-  "https://feel-precipitation-collective-quiet.trycloudflare.com/auth/callback",
-  "https://feel-precipitation-collective-quiet.trycloudflare.com/auth/shopify/callback",
-  "https://feel-precipitation-collective-quiet.trycloudflare.com/api/auth/callback"
+  "https://catch-myanmar-funny-commodities.trycloudflare.com/auth/callback",
+  "https://catch-myanmar-funny-commodities.trycloudflare.com/auth/shopify/callback",
+  "https://catch-myanmar-funny-commodities.trycloudflare.com/api/auth/callback"
 ]
 
 [webhooks]

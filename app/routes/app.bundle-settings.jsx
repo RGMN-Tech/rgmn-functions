@@ -1,5 +1,5 @@
 import { json, redirect } from "@remix-run/node";
-import { useLoaderData, Form, useNavigation } from "@remix-run/react";
+import { useLoaderData, Form, useNavigation, useSubmit } from "@remix-run/react";
 import { Page, Layout, Card, Text, TextField, Button, Select, InlineStack, BlockStack, Modal, ResourceList, ResourceItem, Thumbnail, Checkbox } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import React from "react";
@@ -25,9 +25,13 @@ export async function loader({ request }) {
             id
             title
             handle
-            featuredImage {
-              url
-              altText
+            featuredMedia {
+              ... on MediaImage {
+                image {
+                  url
+                  altText
+                }
+              }
             }
             variants(first: 10) {
               edges {
@@ -66,21 +70,52 @@ export async function action({ request }) {
 
   const config = JSON.parse(form.get("config_json"));
 
-  // Upsert shop metafield (owner = shop)
-  const mutation = `#graphql
-    mutation metafieldsSet($val: JSON!) {
-      metafieldsSet(metafields: [{
-        namespace:"$app:rgmn-bundle",
-        key:"function-configuration",
-        type:"json",
-        ownerId:"gid://shopify/Shop/1",  # ownerId can be omitted; shop-scoped token infers shop
-        value:$val
-      }]) {
-        userErrors { field message }
+  // First get the shop ID
+  const shopQuery = `#graphql
+    query {
+      shop {
+        id
       }
     }`;
 
-  await admin.graphql(mutation, { variables: { val: JSON.stringify(config) } });
+  const shopResult = await admin.graphql(shopQuery);
+  const shopData = await shopResult.json();
+  const shopId = shopData.data.shop.id;
+
+  // Upsert shop metafield (owner = shop)
+  const mutation = `#graphql
+    mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields {
+          id
+          key
+          value
+        }
+        userErrors { 
+          field 
+          message 
+        }
+      }
+    }`;
+
+  const variables = {
+    metafields: [{
+      namespace: "$app:rgmn-bundle",
+      key: "function-configuration",
+      type: "json",
+      value: JSON.stringify(config),
+      ownerId: shopId
+    }]
+  };
+
+  const result = await admin.graphql(mutation, { variables });
+  const data = await result.json();
+  
+  // Log any errors for debugging
+  if (data.data?.metafieldsSet?.userErrors?.length > 0) {
+    console.error('Metafield save errors:', data.data.metafieldsSet.userErrors);
+  }
+  
   return redirect("/app/bundle-settings?saved=1");
 }
 
@@ -98,6 +133,21 @@ export default function BundleSettings() {
     confirmBtn: "Yes, upgrade to bundle",
     oneTimeLabel: "One-time purchase"
   });
+
+  // Update form state when loader data changes (after save/reload)
+  React.useEffect(() => {
+    if (current) {
+      setBundleTitle(current.bundleTitle || "Complete Kit");
+      setBundleVariantId(current.bundleVariantId || "");
+      setComponents(current.components || []);
+      setUiCopy(current.uiCopy || {
+        cta: "Replace {sets} individual item(s) with the {bundle} and save?",
+        ctaSubscribe: "Subscribe & save", 
+        confirmBtn: "Yes, upgrade to bundle",
+        oneTimeLabel: "One-time purchase"
+      });
+    }
+  }, [current]);
   const [showJsonEditor, setShowJsonEditor] = React.useState(false);
   const [showProductPicker, setShowProductPicker] = React.useState(false);
   const [editingComponentIndex, setEditingComponentIndex] = React.useState(-1);
@@ -147,6 +197,8 @@ export default function BundleSettings() {
     )
   ];
 
+  const submit = useSubmit();
+  
   const handleSave = () => {
     const config = {
       bundleVariantId,
@@ -157,19 +209,9 @@ export default function BundleSettings() {
       defaults: current?.defaults || { subscriptionMode: "match-components", subscribeDefaultPlanId: null }
     };
     
-    // Create a form and submit it
-    const form = document.createElement('form');
-    form.method = 'post';
-    form.style.display = 'none';
-    
-    const input = document.createElement('input');
-    input.type = 'hidden';
-    input.name = 'config_json';
-    input.value = JSON.stringify(config);
-    
-    form.appendChild(input);
-    document.body.appendChild(form);
-    form.submit();
+    const formData = new FormData();
+    formData.append('config_json', JSON.stringify(config));
+    submit(formData, { method: 'post' });
   };
 
   const currentJson = JSON.stringify({
@@ -197,6 +239,16 @@ export default function BundleSettings() {
       ]}
     >
       <Layout>
+        {!current && (
+          <Layout.Section>
+            <Card>
+              <Text as="p" tone="subdued">
+                ℹ️ No bundle configuration found. Creating new bundle configuration with default values.
+              </Text>
+            </Card>
+          </Layout.Section>
+        )}
+        
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
@@ -287,33 +339,49 @@ export default function BundleSettings() {
         <Layout.Section>
           <Card>
             <BlockStack gap="400">
+              <Text as="h2" variant="headingMd">Subscription Plans</Text>
+              <Text as="p" tone="subdued">
+                Bundles are always subscription-based products. Configure the available subscription plans for your bundle.
+              </Text>
+              
+              {(current?.bundleSellingPlans || []).length === 0 ? (
+                <Text as="p" tone="critical">
+                  ⚠️ No subscription plans configured. You need to set up selling plans for your bundle product in Shopify admin first.
+                </Text>
+              ) : (
+                <Text as="p" tone="success">
+                  ✓ {(current?.bundleSellingPlans || []).length} subscription plan{(current?.bundleSellingPlans || []).length !== 1 ? 's' : ''} available
+                </Text>
+              )}
+            </BlockStack>
+          </Card>
+        </Layout.Section>
+
+        <Layout.Section>
+          <Card>
+            <BlockStack gap="400">
               <Text as="h2" variant="headingMd">Customer-Facing Text</Text>
               
               <TextField
-                label="Bundle Offer Message"
-                value={uiCopy.cta}
+                label="Upgrade Banner Message"
+                value={uiCopy.cta || "You have items that can be bundled! Upgrade to {bundle} subscription and save."}
                 onChange={(value) => setUiCopy({...uiCopy, cta: value})}
-                helpText="Use {sets} for quantity and {bundle} for bundle name"
+                helpText="Message shown when bundle components are detected. Use {bundle} for bundle name."
                 multiline={2}
               />
               
-              <InlineStack gap="300">
-                <TextField
-                  label="One-time Label"
-                  value={uiCopy.oneTimeLabel}
-                  onChange={(value) => setUiCopy({...uiCopy, oneTimeLabel: value})}
-                />
-                <TextField
-                  label="Subscribe Label"
-                  value={uiCopy.ctaSubscribe}
-                  onChange={(value) => setUiCopy({...uiCopy, ctaSubscribe: value})}
-                />
-              </InlineStack>
-              
               <TextField
-                label="Confirm Button Text"
+                label="Upgrade Button Text"
                 value={uiCopy.confirmBtn}
                 onChange={(value) => setUiCopy({...uiCopy, confirmBtn: value})}
+                helpText="Text for the upgrade button"
+              />
+              
+              <TextField
+                label="Modal Title Prefix"
+                value={uiCopy.ctaSubscribe || "Upgrade to"}
+                onChange={(value) => setUiCopy({...uiCopy, ctaSubscribe: value})}
+                helpText="Prefix for the modal title (e.g., 'Upgrade to [Bundle Name]')"
               />
             </BlockStack>
           </Card>
@@ -417,10 +485,10 @@ function ProductPickerModal({ isOpen, onClose, onSelect, products, selectedVaria
                 <BlockStack gap="300">
                   <InlineStack align="space-between">
                     <InlineStack gap="300">
-                      {product.featuredImage && (
+                      {product.featuredMedia?.image && (
                         <Thumbnail
-                          source={product.featuredImage.url}
-                          alt={product.featuredImage.altText || product.title}
+                          source={product.featuredMedia.image.url}
+                          alt={product.featuredMedia.image.altText || product.title}
                           size="small"
                         />
                       )}
