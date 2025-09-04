@@ -16,10 +16,10 @@ export async function loader({ request }) {
       }
     }`;
   
-  // Get products for pickers
+  // Get products for pickers with selling plans (optimized for query cost)
   const productsQuery = `#graphql
     query {
-      products(first: 100) {
+      products(first: 50) {
         edges {
           node {
             id
@@ -33,14 +33,28 @@ export async function loader({ request }) {
                 }
               }
             }
-            variants(first: 10) {
+            variants(first: 5) {
               edges {
                 node {
                   id
                   title
                   price
                   sku
-                  inventoryQuantity
+                  sellingPlanGroups(first: 3) {
+                    edges {
+                      node {
+                        sellingPlans(first: 3) {
+                          edges {
+                            node {
+                              id
+                              name
+                              description
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -200,10 +214,29 @@ export default function BundleSettings() {
   const submit = useSubmit();
   
   const handleSave = () => {
+    // Find the selected bundle variant and its selling plans
+    let bundleSellingPlans = current?.bundleSellingPlans || [];
+    
+    if (bundleVariantId) {
+      const selectedVariant = products.flatMap(product => 
+        product.variants.edges.map(edge => edge.node)
+      ).find(variant => variant.id === bundleVariantId);
+      
+      if (selectedVariant?.sellingPlanGroups?.edges?.length > 0) {
+        bundleSellingPlans = selectedVariant.sellingPlanGroups.edges.flatMap(groupEdge => 
+          groupEdge.node.sellingPlans.edges.map(planEdge => ({
+            id: planEdge.node.id,
+            name: planEdge.node.name,
+            description: planEdge.node.description
+          }))
+        );
+      }
+    }
+    
     const config = {
       bundleVariantId,
       bundleTitle,
-      bundleSellingPlans: current?.bundleSellingPlans || [],
+      bundleSellingPlans,
       components,
       uiCopy,
       defaults: current?.defaults || { subscriptionMode: "match-components", subscribeDefaultPlanId: null }
@@ -214,10 +247,30 @@ export default function BundleSettings() {
     submit(formData, { method: 'post' });
   };
 
+  // Get current selling plans for preview
+  const getCurrentSellingPlans = () => {
+    if (bundleVariantId) {
+      const selectedVariant = products.flatMap(product => 
+        product.variants.edges.map(edge => edge.node)
+      ).find(variant => variant.id === bundleVariantId);
+      
+      if (selectedVariant?.sellingPlanGroups?.edges?.length > 0) {
+        return selectedVariant.sellingPlanGroups.edges.flatMap(groupEdge => 
+          groupEdge.node.sellingPlans.edges.map(planEdge => ({
+            id: planEdge.node.id,
+            name: planEdge.node.name,
+            description: planEdge.node.description
+          }))
+        );
+      }
+    }
+    return current?.bundleSellingPlans || [];
+  };
+
   const currentJson = JSON.stringify({
     bundleVariantId,
     bundleTitle,
-    bundleSellingPlans: current?.bundleSellingPlans || [],
+    bundleSellingPlans: getCurrentSellingPlans(),
     components,
     uiCopy,
     defaults: current?.defaults || { subscriptionMode: "match-components", subscribeDefaultPlanId: null }
@@ -344,15 +397,33 @@ export default function BundleSettings() {
                 Bundles are always subscription-based products. Configure the available subscription plans for your bundle.
               </Text>
               
-              {(current?.bundleSellingPlans || []).length === 0 ? (
-                <Text as="p" tone="critical">
-                  ⚠️ No subscription plans configured. You need to set up selling plans for your bundle product in Shopify admin first.
-                </Text>
-              ) : (
-                <Text as="p" tone="success">
-                  ✓ {(current?.bundleSellingPlans || []).length} subscription plan{(current?.bundleSellingPlans || []).length !== 1 ? 's' : ''} available
-                </Text>
-              )}
+              {(() => {
+                const currentPlans = getCurrentSellingPlans();
+                return currentPlans.length === 0 ? (
+                  <Text as="p" tone="critical">
+                    ⚠️ No subscription plans configured. {bundleVariantId ? 'The selected bundle product has no selling plans.' : 'Please select a bundle product with selling plans.'}
+                  </Text>
+                ) : (
+                  <BlockStack gap="200">
+                    <Text as="p" tone="success">
+                      ✓ {currentPlans.length} subscription plan{currentPlans.length !== 1 ? 's' : ''} available
+                    </Text>
+                    {currentPlans.map((plan, index) => (
+                      <Card key={plan.id} background="bg-surface-secondary">
+                        <Text as="p" variant="bodyMd">
+                          <strong>{plan.name}</strong>
+                          {plan.description && (
+                            <>
+                              <br />
+                              <Text as="span" tone="subdued">{plan.description}</Text>
+                            </>
+                          )}
+                        </Text>
+                      </Card>
+                    ))}
+                  </BlockStack>
+                );
+              })()}
             </BlockStack>
           </Card>
         </Layout.Section>

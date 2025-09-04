@@ -4,5 +4,8 @@ query RunInput {
       id
       quantity
     }
+    attribute(key: "rgmn-bundle-apply") {
+      value
+    }
   }
 }

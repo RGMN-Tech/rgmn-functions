@@ -48,11 +48,21 @@ function findBundleComponents(cart, config) {
     componentCounts.get(comp.key) >= (comp.required || 1)
   );
   
+  // Find missing components and their details
+  const missingComponents = components.filter(comp => 
+    componentCounts.get(comp.key) < (comp.required || 1)
+  ).map(comp => ({
+    ...comp,
+    needed: (comp.required || 1) - componentCounts.get(comp.key),
+    hasAny: componentCounts.get(comp.key) > 0
+  }));
+  
   return { 
     hasAnyComponent: bundleItems.length > 0,
     hasAllComponents,
     bundleItems,
-    componentCounts
+    componentCounts,
+    missingComponents
   };
 }
 
@@ -60,7 +70,7 @@ function renderUpgradeButton({ bundleComponents, config }) {
   const el = document.getElementById('rgmn-bundle-offer');
   if (!el) return;
   
-  const { hasAnyComponent, hasAllComponents, bundleItems } = bundleComponents;
+  const { hasAnyComponent, hasAllComponents, bundleItems, missingComponents } = bundleComponents;
   
   if (!hasAnyComponent) {
     el.style.display = 'none';
@@ -70,16 +80,17 @@ function renderUpgradeButton({ bundleComponents, config }) {
   const copy = config.uiCopy || {};
   const bundleName = config.bundleTitle || 'Bundle';
   
-  // Different messages based on whether they have all components
+  // Always show upgrade option when any component is present
   let message, buttonText, buttonEnabled;
   
   if (hasAllComponents) {
-    message = `You have items that can be bundled! Upgrade to ${bundleName} subscription and save.`;
+    message = `You have all items for the ${bundleName}! Upgrade to subscription and save.`;
     buttonText = "Upgrade & Save";
     buttonEnabled = true;
   } else {
-    message = `Add more items to unlock ${bundleName} subscription savings.`;
-    buttonText = "See Bundle Details";
+    const missingCount = missingComponents.reduce((sum, comp) => sum + comp.needed, 0);
+    message = `Start your ${bundleName} subscription! We'll add ${missingCount} missing item${missingCount !== 1 ? 's' : ''} to complete your bundle.`;
+    buttonText = "Complete Bundle";
     buttonEnabled = true;
   }
 
@@ -89,7 +100,7 @@ function renderUpgradeButton({ bundleComponents, config }) {
         <div class="rgmn-upgrade-icon">🎁</div>
         <div class="rgmn-upgrade-text">
           <h3>${message}</h3>
-          <p>${bundleItems.length} bundle item${bundleItems.length !== 1 ? 's' : ''} in your cart</p>
+          <p>${bundleItems.length} bundle item${bundleItems.length !== 1 ? 's' : ''} in your cart${!hasAllComponents ? ` • ${missingComponents.length} component${missingComponents.length !== 1 ? 's' : ''} needed` : ''}</p>
         </div>
         <button id="rgmn-upgrade-btn" class="rgmn-upgrade-button" ${!buttonEnabled ? 'disabled' : ''}>
           ${buttonText}
@@ -241,6 +252,24 @@ function addUpgradeStyles() {
       color: #666;
     }
     
+    .rgmn-bundle-item-missing {
+      background: #f0f9ff;
+      border-color: #0369a1;
+    }
+    
+    .rgmn-item-icon {
+      width: 60px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #0369a1;
+      color: white;
+      border-radius: 4px;
+      font-size: 24px;
+      font-weight: bold;
+    }
+    
     .rgmn-btn-primary {
       background: #667eea;
       color: white;
@@ -276,38 +305,62 @@ function addUpgradeStyles() {
 }
 
 function showUpgradeModal(bundleComponents, config) {
-  const { bundleItems, hasAllComponents } = bundleComponents;
+  const { bundleItems, hasAllComponents, missingComponents, componentCounts } = bundleComponents;
   const bundleName = config.bundleTitle || 'Bundle';
+  const components = config.components || [];
+  
+  // Show what missing components will be included in the bundle
+  const missingItemsHtml = missingComponents.length > 0 ? `
+    <h3>Missing components included in your ${bundleName}:</h3>
+    ${missingComponents.map(comp => {
+      return `
+        <div class="rgmn-bundle-item rgmn-bundle-item-missing">
+          <div class="rgmn-item-icon">📦</div>
+          <div class="rgmn-item-details">
+            <h4>${comp.label}</h4>
+            <p>Qty: ${comp.needed} • Included in your bundle subscription</p>
+          </div>
+        </div>
+      `;
+    }).join('')}
+  ` : '';
   
   const modalHtml = `
     <div class="rgmn-modal-overlay" id="rgmn-modal">
       <div class="rgmn-modal">
         <div class="rgmn-modal-header">
-          <h2>Upgrade to ${bundleName}</h2>
+          <h2>Complete Your ${bundleName}</h2>
           <p>Switch to a subscription and save on your regular order</p>
         </div>
         
         <div class="rgmn-modal-body">
-          <h3>Items in your cart for this bundle:</h3>
-          ${bundleItems.map(item => `
-            <div class="rgmn-bundle-item">
-              <img src="${item.image}" alt="${item.productTitle}">
-              <div class="rgmn-item-details">
-                <h4>${item.productTitle}</h4>
-                <p>${item.variantTitle} • Qty: ${item.quantity} • $${(item.price / 100).toFixed(2)}</p>
+          <h3>Items currently in your cart:</h3>
+          ${bundleItems.map(item => {
+            const bundleQty = Math.min(item.quantity, item.component.required || 1);
+            const excessQty = item.quantity - bundleQty;
+            
+            return `
+              <div class="rgmn-bundle-item">
+                <img src="${item.image}" alt="${item.productTitle}">
+                <div class="rgmn-item-details">
+                  <h4>${item.productTitle}</h4>
+                  <p>${item.variantTitle} • Bundle: ${bundleQty}${excessQty > 0 ? ` • Remaining: ${excessQty}` : ''} • $${(item.price / 100).toFixed(2)}</p>
+                </div>
               </div>
-            </div>
-          `).join('')}
+            `;
+          }).join('')}
+          
+          ${missingItemsHtml}
           
           ${hasAllComponents ? `
             <div style="background: #f0f9ff; padding: 16px; border-radius: 8px; margin: 16px 0;">
               <h4 style="margin: 0 0 8px 0; color: #0369a1;">✓ Ready to bundle!</h4>
-              <p style="margin: 0; color: #0369a1;">You have all the items needed for this bundle. Upgrade to subscription and save!</p>
+              <p style="margin: 0; color: #0369a1;">You have all the items needed. Upgrade to subscription and save!</p>
             </div>
           ` : `
-            <div style="background: #fef3c7; padding: 16px; border-radius: 8px; margin: 16px 0;">
-              <h4 style="margin: 0 0 8px 0; color: #92400e;">Missing items</h4>
-              <p style="margin: 0; color: #92400e;">Add the remaining bundle components to unlock subscription savings.</p>
+            <div style="background: #e0f2fe; padding: 16px; border-radius: 8px; margin: 16px 0;">
+              <h4 style="margin: 0 0 8px 0; color: #0277bd;">📦 Bundle Upgrade</h4>
+              <p style="margin: 0; color: #0277bd;">Your ${bundleName} subscription includes all components shown above. Any extra quantities will remain as one-time purchases.</p>
             </div>
           `}
         </div>
@@ -316,11 +369,9 @@ function showUpgradeModal(bundleComponents, config) {
           <button class="rgmn-btn-secondary" onclick="closeUpgradeModal()">
             Close
           </button>
-          ${hasAllComponents ? `
-            <button class="rgmn-btn-primary" onclick="confirmBundleUpgrade()">
-              Upgrade to Subscription
-            </button>
-          ` : ''}
+          <button class="rgmn-btn-primary" onclick="confirmBundleUpgrade()">
+            ${hasAllComponents ? 'Upgrade to Subscription' : 'Complete Bundle Subscription'}
+          </button>
         </div>
       </div>
     </div>
@@ -342,48 +393,106 @@ function closeUpgradeModal() {
 
 async function confirmBundleUpgrade() {
   const { bundleComponents, config } = window.rgmnBundleData;
-  const { bundleItems } = bundleComponents;
+  const { bundleItems, missingComponents } = bundleComponents;
+  
+  console.log('🎯 Bundle upgrade started:', {
+    bundleItems,
+    missingComponents,
+    config
+  });
   
   // Get the first selling plan ID (assuming bundle has subscription plans)
   const subscriptionPlanId = config.bundleSellingPlans?.[0]?.id;
   if (!subscriptionPlanId) {
-    alert('No subscription plan configured for this bundle.');
+    alert('No subscription plan configured for this bundle. Please contact support or configure selling plans for your bundle product in Shopify admin.');
     return;
   }
   
-  // Prepare items to remove
+  // Prepare items to remove (only the quantities needed for the bundle)
   const itemsToRemove = bundleItems.map(item => ({
     cartLineId: item.cartLineId,
     currentQuantity: item.quantity,
     quantityToRemove: Math.min(item.quantity, item.component.required || 1)
   }));
   
+  // No need to add individual components - the bundle product contains everything
+  const itemsToAdd = [];
+  
   try {
-    await applyBundleUpgrade(config.bundleVariantId, itemsToRemove, subscriptionPlanId);
+    await applyBundleUpgrade(config.bundleVariantId, itemsToRemove, subscriptionPlanId, itemsToAdd);
   } catch (error) {
     console.error('Bundle upgrade failed:', error);
     alert('Sorry, there was an error upgrading your bundle. Please try again.');
   }
 }
 
-async function applyBundleUpgrade(bundleVariantId, itemsToRemove, subscriptionPlanId) {
+async function applyBundleUpgrade(bundleVariantId, itemsToRemove, subscriptionPlanId, itemsToAdd = []) {
   const upgradeData = {
     bundleVariantId,
     itemsToRemove,
-    subscriptionPlanId
+    subscriptionPlanId,
+    itemsToAdd
   };
   
-  await fetch('/cart/update.js', {
-    method: 'POST', 
-    headers: { 'Content-Type':'application/json' },
-    body: JSON.stringify({ 
-      attributes: { 
-        'rgmn-bundle-apply': `manual_bundle_upgrade:${JSON.stringify(upgradeData)}` 
-      } 
-    })
-  });
-  
-  location.reload();
+  try {
+    console.log('📤 Starting bundle upgrade process:', upgradeData);
+    
+    // Extract numeric ID from GraphQL ID for cart API
+    const numericVariantId = bundleVariantId.replace('gid://shopify/ProductVariant/', '');
+    const numericSellingPlanId = subscriptionPlanId.replace('gid://shopify/SellingPlan/', '');
+    
+    // Step 1: Add the bundle product to cart
+    console.log('🛒 Step 1: Adding bundle product to cart...', { numericVariantId, numericSellingPlanId });
+    const addResponse = await fetch('/cart/add.js', {
+      method: 'POST', 
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ 
+        id: numericVariantId,
+        quantity: 1,
+        selling_plan: numericSellingPlanId
+      })
+    });
+    
+    console.log('📥 Add bundle response:', addResponse.status, addResponse.statusText);
+    
+    if (!addResponse.ok) {
+      const responseText = await addResponse.text();
+      console.error('❌ Add bundle failed:', responseText);
+      throw new Error(`Add bundle failed: ${addResponse.status}`);
+    }
+    
+    console.log('✅ Bundle added successfully');
+    
+    // Step 2: Remove individual items from cart
+    console.log('🗑️ Step 2: Removing individual items from cart...');
+    for (const item of itemsToRemove) {
+      console.log('Removing item:', item.cartLineId, 'quantity:', item.quantityToRemove);
+      
+      const removeResponse = await fetch('/cart/change.js', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: item.cartLineId,
+          quantity: item.currentQuantity - item.quantityToRemove
+        })
+      });
+      
+      if (!removeResponse.ok) {
+        const responseText = await removeResponse.text();
+        console.error('❌ Remove item failed:', responseText);
+        throw new Error(`Remove item failed: ${removeResponse.status}`);
+      }
+      
+      console.log('✅ Item removed successfully');
+    }
+    
+    console.log('🎉 Bundle upgrade completed successfully!');
+    // To do: handle the cart update response and trigger a cart update event
+    location.reload();
+  } catch (error) {
+    console.error('Bundle upgrade error:', error);
+    throw error;
+  }
 }
 
 // Initialize the system
