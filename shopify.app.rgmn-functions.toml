@@ -4,7 +4,7 @@
 client_id = "77dc002e0c0f5a42da57f99b2dd76b12"
 name = "RGMN Functions"
 handle = "rgmn-functions"
-application_url = "https://rgmn-functions-production.railway.app"
+application_url = "https://rgmn-functions-production.up.railway.app"
 embedded = true
 
 [build]
@@ -18,9 +18,9 @@ scopes = "read_products,write_products"
 
 [auth]
 redirect_urls = [
-  "https://rgmn-functions-production.railway.app/auth/callback",
-  "https://rgmn-functions-production.railway.app/auth/shopify/callback",
-  "https://rgmn-functions-production.railway.app/api/auth/callback"
+  "https://rgmn-functions-production.up.railway.app/auth/callback",
+  "https://rgmn-functions-production.up.railway.app/auth/shopify/callback",
+  "https://rgmn-functions-production.up.railway.app/api/auth/callback"
 ]
 
 [webhooks]
