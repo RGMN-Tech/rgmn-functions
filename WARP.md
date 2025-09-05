@@ -93,10 +93,10 @@ Required environment variables:
 - `SHOPIFY_API_SECRET`: App's API secret
 - `SHOPIFY_APP_URL`: App's URL (set automatically by CLI)
 - `SCOPES`: Comma-separated OAuth scopes
-- `DATABASE_URL`: Database connection string (PostgreSQL for production, SQLite for dev)
+- `DATABASE_URL`: Database connection string (MySQL for production, SQLite for dev)
 
 ### Database Configuration
-- **Production (Railway)**: Uses PostgreSQL with automatic DATABASE_URL provisioning
+- **Production (Railway)**: Uses MySQL with automatic DATABASE_URL provisioning
 - **Development**: Can use SQLite with `DATABASE_URL="file:./dev.sqlite"`
 - Always run `npx prisma generate` after schema changes
 - Use `npx prisma migrate dev` for development migrations

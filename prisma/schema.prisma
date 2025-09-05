@@ -9,10 +9,10 @@ generator client {
 // enough when changing adapters.
 // See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
   // For local development, you can use: DATABASE_URL="file:./dev.sqlite" with provider = "sqlite"
-  // For production (Railway), use the provided PostgreSQL DATABASE_URL
+  // For production (Railway), use the provided MySQL DATABASE_URL
 }
 
 model Session {

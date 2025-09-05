@@ -16,8 +16,8 @@ SCOPES=read_products,write_products
 
 ### Database Configuration
 ```bash
-# Railway automatically provides this for PostgreSQL
-DATABASE_URL=postgresql://username:password@host:port/database
+# Railway automatically provides this for MySQL
+DATABASE_URL=mysql://username:password@host:port/database
 ```
 
 ### Node Environment
@@ -27,10 +27,10 @@ NODE_ENV=production
 
 ## Database Setup
 
-This app uses PostgreSQL in production (Railway) and can use SQLite for local development.
+This app uses MySQL in production (Railway) and can use SQLite for local development.
 
 ### Production Database (Railway)
-- Railway automatically provisions a PostgreSQL database
+- Railway automatically provisions a MySQL database
 - The `DATABASE_URL` environment variable is automatically set
 - Database migrations run automatically during deployment via `docker-start` script
 
@@ -57,7 +57,7 @@ datasource db {
 If you experience 401 unauthorized errors when accessing the app through Shopify admin:
 
 1. **Verify environment variables** are set correctly in Railway
-2. **Check database connectivity** - ensure PostgreSQL is provisioned and connected
+2. **Check database connectivity** - ensure MySQL is provisioned and connected
 3. **Verify app URL** matches the Railway deployment URL
 4. **Check Shopify app configuration** in Partner Dashboard matches Railway URLs
 
@@ -65,7 +65,7 @@ If you experience 401 unauthorized errors when accessing the app through Shopify
 
 The app is configured for Railway deployment with:
 - **Dockerfile** optimized for Railway
-- **PostgreSQL** database integration
+- **MySQL** database integration
 - **Automatic migrations** on deployment
 - **Environment-based configuration**
 
