@@ -9,8 +9,10 @@ generator client {
 // enough when changing adapters.
 // See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  // For local development, you can use: DATABASE_URL="file:./dev.sqlite" with provider = "sqlite"
+  // For production (Railway), use the provided PostgreSQL DATABASE_URL
 }
 
 model Session {
@@ -21,7 +23,7 @@ model Session {
   scope         String?
   expires       DateTime?
   accessToken   String
-  userId        BigInt?
+  userId        String?   // Changed from BigInt to String for better PostgreSQL compatibility
   firstName     String?
   lastName      String?
   email         String?

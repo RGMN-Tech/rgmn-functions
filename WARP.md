@@ -93,11 +93,14 @@ Required environment variables:
 - `SHOPIFY_API_SECRET`: App's API secret
 - `SHOPIFY_APP_URL`: App's URL (set automatically by CLI)
 - `SCOPES`: Comma-separated OAuth scopes
+- `DATABASE_URL`: Database connection string (PostgreSQL for production, SQLite for dev)
 
-### Database Changes
+### Database Configuration
+- **Production (Railway)**: Uses PostgreSQL with automatic DATABASE_URL provisioning
+- **Development**: Can use SQLite with `DATABASE_URL="file:./dev.sqlite"`
 - Always run `npx prisma generate` after schema changes
 - Use `npx prisma migrate dev` for development migrations
-- Production deployments use `npx prisma migrate deploy`
+- Production deployments use `npx prisma migrate deploy` (handled automatically)
 
 ### Embedded App Constraints
 - Use Remix's `Link` component, not `<a>` tags
