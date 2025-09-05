@@ -443,14 +443,21 @@ async function applyBundleUpgrade(bundleVariantId, itemsToRemove, subscriptionPl
     
     // Step 1: Add the bundle product to cart
     console.log('🛒 Step 1: Adding bundle product to cart...', { numericVariantId, numericSellingPlanId });
-    const addResponse = await fetch('/cart/add.js', {
-      method: 'POST', 
-      headers: { 'Content-Type':'application/json' },
-      body: JSON.stringify({ 
+    
+    // Use the cart add endpoint with sections to get updated cart data
+    const addBody = JSON.stringify({
+      items: [{
         id: numericVariantId,
         quantity: 1,
         selling_plan: numericSellingPlanId
-      })
+      }],
+      sections: ['cart-drawer', 'cart-icon-bubble']
+    });
+    
+    const addResponse = await fetch('/cart/add.js', {
+      method: 'POST', 
+      headers: { 'Content-Type':'application/json' },
+      body: addBody
     });
     
     console.log('📥 Add bundle response:', addResponse.status, addResponse.statusText);
@@ -461,20 +468,26 @@ async function applyBundleUpgrade(bundleVariantId, itemsToRemove, subscriptionPl
       throw new Error(`Add bundle failed: ${addResponse.status}`);
     }
     
+    const addResult = await addResponse.json();
     console.log('✅ Bundle added successfully');
     
-    // Step 2: Remove individual items from cart
+    // Step 2: Remove individual items from cart (process sequentially)
     console.log('🗑️ Step 2: Removing individual items from cart...');
+    let finalCartState = null;
+    
     for (const item of itemsToRemove) {
       console.log('Removing item:', item.cartLineId, 'quantity:', item.quantityToRemove);
+      
+      const removeBody = JSON.stringify({
+        id: item.cartLineId,
+        quantity: item.currentQuantity - item.quantityToRemove,
+        sections: ['cart-drawer', 'cart-icon-bubble']
+      });
       
       const removeResponse = await fetch('/cart/change.js', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: item.cartLineId,
-          quantity: item.currentQuantity - item.quantityToRemove
-        })
+        body: removeBody
       });
       
       if (!removeResponse.ok) {
@@ -483,15 +496,82 @@ async function applyBundleUpgrade(bundleVariantId, itemsToRemove, subscriptionPl
         throw new Error(`Remove item failed: ${removeResponse.status}`);
       }
       
+      finalCartState = await removeResponse.json();
       console.log('✅ Item removed successfully');
     }
     
     console.log('🎉 Bundle upgrade completed successfully!');
-    // To do: handle the cart update response and trigger a cart update event
-    location.reload();
+    
+    // Step 3: Update the cart UI and open cart drawer
+    await updateCartAndOpenDrawer(finalCartState || addResult);
+    
+    // Close the modal
+    closeUpgradeModal();
+    
   } catch (error) {
     console.error('Bundle upgrade error:', error);
     throw error;
+  }
+}
+
+async function updateCartAndOpenDrawer(cartState) {
+  try {
+    // Update cart sections if we have section data
+    if (cartState.sections) {
+      // Update cart drawer
+      if (cartState.sections['cart-drawer']) {
+        const cartDrawerElement = document.querySelector('#CartDrawer');
+        if (cartDrawerElement) {
+          const parser = new DOMParser();
+          const newCartDrawer = parser.parseFromString(cartState.sections['cart-drawer'], 'text/html');
+          const newCartDrawerContent = newCartDrawer.querySelector('#CartDrawer');
+          if (newCartDrawerContent) {
+            cartDrawerElement.innerHTML = newCartDrawerContent.innerHTML;
+          }
+        }
+      }
+      
+      // Update cart icon bubble
+      if (cartState.sections['cart-icon-bubble']) {
+        const cartIconElement = document.querySelector('#cart-icon-bubble');
+        if (cartIconElement) {
+          const parser = new DOMParser();
+          const newCartIcon = parser.parseFromString(cartState.sections['cart-icon-bubble'], 'text/html');
+          const newCartIconContent = newCartIcon.querySelector('.shopify-section');
+          if (newCartIconContent) {
+            cartIconElement.innerHTML = newCartIconContent.innerHTML;
+          }
+        }
+      }
+    }
+    
+    // Publish cart update event using your theme's pub/sub system
+    if (typeof publish === 'function' && typeof PUB_SUB_EVENTS !== 'undefined') {
+      publish(PUB_SUB_EVENTS.cartUpdate, { 
+        source: 'bundle-upgrade', 
+        cartData: cartState
+      });
+    }
+    
+    // Open the cart drawer
+    const cartDrawer = document.querySelector('cart-drawer');
+    if (cartDrawer && typeof cartDrawer.open === 'function') {
+      // Use the cart drawer's built-in open method
+      cartDrawer.open();
+    } else {
+      // Fallback: trigger click on cart icon
+      const cartIcon = document.querySelector('#cart-icon');
+      if (cartIcon) {
+        cartIcon.click();
+      }
+    }
+    
+    console.log('✅ Cart updated and drawer opened');
+    
+  } catch (error) {
+    console.error('Error updating cart UI:', error);
+    // Fallback to reload if cart update fails
+    location.reload();
   }
 }
 

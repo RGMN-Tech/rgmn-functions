@@ -1,3 +1,6 @@
 name = "rgmn-bundle-offer-ui"
 type = "theme"
 
+[[targeting]]
+target = "section"
+
